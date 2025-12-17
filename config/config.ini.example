@@ -1,0 +1,26 @@
+[telegram]
+api_id = YOUR_API_ID
+api_hash = YOUR_API_HASH
+session_file = sessions/session
+
+[delays]
+join_group_min = 5
+join_group_max = 15
+send_message_min = 3
+send_message_max = 10
+
+[scheduler]
+enabled = false
+mode = immediate
+interval_hours = 3
+schedule_times = 9,12,14,19
+timezone = UTC
+
+[message]
+text = 
+templates = 
+
+[ui]
+theme = default
+language = ru
+
