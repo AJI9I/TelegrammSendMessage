@@ -18,12 +18,22 @@ def setup_logger(name: str = "TeggammMessage", log_dir: str = "logs") -> logging
     Returns:
         Настроенный логгер
     """
+    # Получаем логгер (если он уже существует, вернется тот же объект)
+    logger = logging.getLogger(name)
+    
+    # Если у логгера уже есть обработчики, значит он уже настроен
+    # Возвращаем его без добавления новых обработчиков
+    if logger.handlers:
+        return logger
+    
     # Создаем директорию для логов, если её нет
     Path(log_dir).mkdir(parents=True, exist_ok=True)
     
-    # Создаем логгер
-    logger = logging.getLogger(name)
+    # Устанавливаем уровень логирования только если логгер новый
     logger.setLevel(logging.DEBUG)
+    
+    # Предотвращаем распространение логов на родительский логгер
+    logger.propagate = False
     
     # Формат логов
     formatter = logging.Formatter(

@@ -6,7 +6,7 @@ import sys
 import os
 from pathlib import Path
 import tkinter as tk
-from tkinter import messagebox
+from tkinter import messagebox, filedialog
 from threading import Thread
 from typing import List
 
@@ -18,6 +18,7 @@ if str(project_root) not in sys.path:
 from src.ui.main_window import MainWindow
 from src.ui.auth_window import AuthWindow
 from src.ui.group_select_window import GroupSelectWindow
+from src.ui.export_groups_window import ExportGroupsWindow
 from src.telegram_client import TelegramClientWrapper
 from src.group_manager import GroupManager
 from src.message_sender import MessageSender
@@ -50,6 +51,7 @@ class Application:
         self.is_authenticated = False
         self.auth_window: AuthWindow = None
         self.group_select_window: GroupSelectWindow = None
+        self.export_groups_window: ExportGroupsWindow = None
         
         # Настройка callbacks
         self._setup_callbacks()
@@ -187,6 +189,11 @@ class Application:
             lambda progress, status: self.root.after(0, 
                 lambda: self.main_window.set_progress(progress, status))
         )
+        # Устанавливаем callback для вывода результатов в реальном времени
+        self.message_sender.set_result_callback(
+            lambda group, link_or_error, status: self.root.after(0,
+                lambda g=group, l=link_or_error, s=status: self._handle_result_update(g, l, s))
+        )
         
         logger.info(f"Автоматическая авторизация успешна: {username}")
         self.main_window.add_log(f"Авторизован: {username}", "INFO")
@@ -202,6 +209,8 @@ class Application:
         # Callbacks для удаления и очистки групп
         self.main_window.on_delete_group = self._handle_delete_group
         self.main_window.on_clear_groups = self._handle_clear_groups
+        self.main_window.on_delays_changed = self._handle_delays_changed
+        self.main_window.on_export_groups_clicked = self._handle_export_groups
     
     def _load_saved_data(self):
         """Загрузка сохраненных данных"""
@@ -233,6 +242,13 @@ class Application:
             self.main_window.schedule_entry.insert(0, ','.join(scheduler_config['schedule_times']))
         self.main_window.timezone_var.set(scheduler_config['timezone'])
         self.main_window._on_mode_changed()
+        
+        # Загружаем настройки задержек
+        delays_config = self.config.get_delays()
+        self.main_window.set_delays_config(
+            delays_config['send_min_minutes'],
+            delays_config['send_max_minutes']
+        )
     
     def _setup_scheduler(self):
         """Настройка планировщика"""
@@ -367,6 +383,11 @@ class Application:
             lambda progress, status: self.root.after(0, 
                 lambda: self.main_window.set_progress(progress, status))
         )
+        # Устанавливаем callback для вывода результатов в реальном времени
+        self.message_sender.set_result_callback(
+            lambda group, link_or_error, status: self.root.after(0,
+                lambda g=group, l=link_or_error, s=status: self._handle_result_update(g, l, s))
+        )
         
         logger.info(f"Успешная авторизация: {username}")
     
@@ -440,7 +461,8 @@ class Application:
     async def _load_dialogs_async(self):
         """Асинхронная загрузка диалогов"""
         try:
-            dialogs = await self.telegram_client.get_dialogs(limit=200)
+            # Загружаем все диалоги (используем большое число вместо None)
+            dialogs = await self.telegram_client.get_dialogs(limit=10000)  # Большой лимит для загрузки всех
             # Фильтруем только группы и каналы
             groups = [d for d in dialogs if d.get("type") in ["group", "channel"]]
             self.root.after(0, lambda: self.group_select_window.set_dialogs(groups))
@@ -490,6 +512,144 @@ class Application:
         self.config.set_selected_groups(groups)
         logger.info(f"Группы сохранены в конфигурацию")
     
+    def _handle_delays_changed(self):
+        """Обработка изменения настроек задержек"""
+        delays_config = self.main_window.get_delays_config()
+        self.config.set_delays(
+            send_min_minutes=delays_config['send_min_minutes'],
+            send_max_minutes=delays_config['send_max_minutes']
+        )
+        # Обновляем delay_manager
+        self.delay_manager.update_delays(
+            send_min_minutes=delays_config['send_min_minutes'],
+            send_max_minutes=delays_config['send_max_minutes']
+        )
+        logger.info(f"Настройки задержек обновлены: {delays_config['send_min_minutes']}-{delays_config['send_max_minutes']} минут")
+    
+    def _handle_export_groups(self):
+        """Обработка экспорта групп"""
+        if not self.is_authenticated:
+            self.main_window.add_log("Сначала авторизуйтесь", "ERROR")
+            messagebox.showerror("Ошибка", "Сначала авторизуйтесь в Telegram")
+            return
+        
+        if self.export_groups_window:
+            try:
+                if self.export_groups_window.window.winfo_exists():
+                    self.export_groups_window.window.lift()
+                    self.export_groups_window.window.focus_force()
+                    return
+            except tk.TclError:
+                self.export_groups_window = None
+        
+        self.export_groups_window = ExportGroupsWindow(self.root)
+        self.export_groups_window.on_export_selected = self._handle_export_selected_groups
+        self.export_groups_window.on_export_all = self._handle_export_all_groups
+        self.export_groups_window.window.protocol("WM_DELETE_WINDOW", self._close_export_window)
+    
+    def _close_export_window(self):
+        """Закрыть окно экспорта"""
+        if self.export_groups_window:
+            try:
+                self.export_groups_window.window.destroy()
+            except tk.TclError:
+                pass
+            finally:
+                self.export_groups_window = None
+    
+    def _handle_export_selected_groups(self):
+        """Экспорт выбранных групп"""
+        groups = self.main_window.get_groups()
+        if not groups:
+            messagebox.showwarning("Предупреждение", "Нет выбранных групп для экспорта")
+            return
+        
+        # Выбираем файл для сохранения
+        filepath = filedialog.asksaveasfilename(
+            defaultextension=".txt",
+            filetypes=[("Текстовые файлы", "*.txt"), ("Все файлы", "*.*")],
+            title="Сохранить группы"
+        )
+        
+        if not filepath:
+            return
+        
+        try:
+            # Сохраняем группы в файл
+            with open(filepath, 'w', encoding='utf-8') as f:
+                for group in groups:
+                    f.write(f"{group}\n")
+            
+            self.main_window.add_log(f"Экспортировано {len(groups)} групп в файл", "INFO")
+            messagebox.showinfo("Успех", f"Экспортировано {len(groups)} групп в файл:\n{filepath}")
+            logger.info(f"Экспортировано {len(groups)} групп в {filepath}")
+        except Exception as e:
+            logger.error(f"Ошибка экспорта групп: {e}")
+            self.main_window.add_log(f"Ошибка экспорта: {e}", "ERROR")
+            messagebox.showerror("Ошибка", f"Не удалось экспортировать группы:\n{str(e)}")
+    
+    def _handle_export_all_groups(self):
+        """Экспорт всех групп из Telegram"""
+        if not self.is_authenticated or not self.telegram_client:
+            self.main_window.add_log("Сначала авторизуйтесь", "ERROR")
+            messagebox.showerror("Ошибка", "Сначала авторизуйтесь в Telegram")
+            return
+        
+        # Выбираем файл для сохранения
+        filepath = filedialog.asksaveasfilename(
+            defaultextension=".txt",
+            filetypes=[("Текстовые файлы", "*.txt"), ("Все файлы", "*.*")],
+            title="Сохранить все группы"
+        )
+        
+        if not filepath:
+            return
+        
+        # Загружаем все группы из Telegram
+        self.main_window.add_log("Загрузка всех групп из Telegram...", "INFO")
+        asyncio.run_coroutine_threadsafe(
+            self._export_all_groups_async(filepath),
+            self.loop
+        )
+    
+    async def _export_all_groups_async(self, filepath: str):
+        """Асинхронный экспорт всех групп"""
+        try:
+            # Получаем все диалоги
+            dialogs = await self.telegram_client.get_dialogs(limit=1000)
+            
+            # Фильтруем только группы и каналы
+            groups = []
+            for dialog in dialogs:
+                if dialog.get("type") in ["group", "channel"]:
+                    # Формируем адрес группы
+                    username = dialog.get("username")
+                    if username:
+                        groups.append(f"@{username}")
+                    else:
+                        # Если нет username, используем ID
+                        groups.append(str(dialog.get("id")))
+            
+            # Удаляем дубликаты
+            groups = list(dict.fromkeys(groups))
+            
+            # Сохраняем в файл
+            with open(filepath, 'w', encoding='utf-8') as f:
+                for group in groups:
+                    f.write(f"{group}\n")
+            
+            self.root.after(0, lambda: self.main_window.add_log(
+                f"Экспортировано {len(groups)} групп в файл", "INFO"))
+            self.root.after(0, lambda: messagebox.showinfo(
+                "Успех", f"Экспортировано {len(groups)} групп в файл:\n{filepath}"))
+            logger.info(f"Экспортировано {len(groups)} групп в {filepath}")
+        except Exception as e:
+            logger.error(f"Ошибка экспорта всех групп: {e}")
+            self.root.after(0, lambda: self.main_window.add_log(
+                f"Ошибка экспорта: {e}", "ERROR"))
+            self.root.after(0, lambda: messagebox.showerror(
+                "Ошибка", f"Не удалось экспортировать группы:\n{str(e)}"))
+    
     async def _run_send_async(self):
         """Асинхронная рассылка"""
         if not self.is_authenticated or not self.message_sender:
@@ -526,6 +686,40 @@ class Application:
         
         self.root.after(0, lambda: self.main_window.add_log(
             f"Рассылка завершена: {', '.join(report_parts)}", "INFO"))
+        
+        # Выводим детали по каждому сообщению
+        for detail in send_results.get('details', []):
+            if detail.get('action') == 'send':
+                group = detail.get('group', '')
+                if detail.get('success'):
+                    message_link = detail.get('message_link', '')
+                    if message_link:
+                        self.root.after(0, lambda g=group, link=message_link: 
+                            self.main_window.add_log(f"✓ {g}: {link}", "SUCCESS"))
+                    else:
+                        self.root.after(0, lambda g=group: 
+                            self.main_window.add_log(f"✓ {g}: сообщение отправлено", "SUCCESS"))
+                else:
+                    error = detail.get('error', 'Неизвестная ошибка')
+                    self.root.after(0, lambda g=group, e=error: 
+                        self.main_window.add_log(f"✗ {g}: {e}", "ERROR"))
+    
+    def _handle_result_update(self, group: str, link_or_error: str, status: str):
+        """
+        Обработка результата отправки сообщения в реальном времени
+        
+        Args:
+            group: Название группы
+            link_or_error: Ссылка на сообщение (при успехе) или описание ошибки (при ошибке)
+            status: Статус ("SUCCESS" или "ERROR")
+        """
+        if status == "SUCCESS":
+            if link_or_error:
+                self.main_window.add_log(f"✓ {group}: {link_or_error}", "SUCCESS")
+            else:
+                self.main_window.add_log(f"✓ {group}: сообщение отправлено", "SUCCESS")
+        else:
+            self.main_window.add_log(f"✗ {group}: {link_or_error}", "ERROR")
     
     def _handle_send_clicked(self):
         """Обработка нажатия кнопки рассылки"""

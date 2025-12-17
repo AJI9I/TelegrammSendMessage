@@ -186,11 +186,16 @@ class TelegramClientWrapper:
         """
         try:
             # Если это числовой ID, проверяем через диалоги
+            # ID может быть сохранен без минуса, пробуем оба варианта
             if group_identifier.lstrip('-').isdigit():
-                group_id = int(group_identifier)
+                group_id_abs = abs(int(group_identifier))
+                group_id_neg = -group_id_abs
+                group_id_neg_100 = -1000000000000 - group_id_abs if group_id_abs < 1000000000000 else None
+                
                 async for dialog in self.client.iter_dialogs():
-                    if dialog.id == group_id:
-                        # Если группа найдена в диалогах, значит мы в ней состоим
+                    if (dialog.id == group_id_neg or 
+                        dialog.id == -group_id_abs or
+                        (group_id_neg_100 and dialog.id == group_id_neg_100)):
                         return True
                 return False
             
@@ -245,10 +250,16 @@ class TelegramClientWrapper:
             entity = None
             
             # Если это числовой ID, получаем entity через диалоги
+            # ID может быть сохранен без минуса, пробуем оба варианта
             if group_identifier.lstrip('-').isdigit():
-                group_id = int(group_identifier)
+                group_id_abs = abs(int(group_identifier))
+                group_id_neg = -group_id_abs
+                group_id_neg_100 = -1000000000000 - group_id_abs if group_id_abs < 1000000000000 else None
+                
                 async for dialog in self.client.iter_dialogs():
-                    if dialog.id == group_id:
+                    if (dialog.id == group_id_neg or 
+                        dialog.id == -group_id_abs or
+                        (group_id_neg_100 and dialog.id == group_id_neg_100)):
                         entity = dialog.entity
                         break
                 
@@ -259,8 +270,9 @@ class TelegramClientWrapper:
                         "entity": None
                     }
             else:
-                # Это username, получаем entity
-                entity = await self.client.get_entity(group_identifier)
+                # Это username, получаем entity (без @ или с @)
+                username = group_identifier.lstrip('@')
+                entity = await self.client.get_entity(username)
             
             # Проверяем тип сущности
             if isinstance(entity, Channel):
@@ -343,10 +355,16 @@ class TelegramClientWrapper:
                 await self.client(JoinChannelRequest(group_identifier))
             elif group_identifier.lstrip('-').isdigit():
                 # Это числовой ID - получаем entity через диалоги
-                group_id = int(group_identifier)
+                # ID может быть сохранен без минуса, пробуем оба варианта
+                group_id_abs = abs(int(group_identifier))
+                group_id_neg = -group_id_abs
+                group_id_neg_100 = -1000000000000 - group_id_abs if group_id_abs < 1000000000000 else None
+                
                 entity = None
                 async for dialog in self.client.iter_dialogs():
-                    if dialog.id == group_id:
+                    if (dialog.id == group_id_neg or 
+                        dialog.id == -group_id_abs or
+                        (group_id_neg_100 and dialog.id == group_id_neg_100)):
                         entity = dialog.entity
                         break
                 
@@ -359,8 +377,9 @@ class TelegramClientWrapper:
                 
                 await self.client(JoinChannelRequest(entity))
             else:
-                # Для username получаем entity и вступаем
-                entity = await self.client.get_entity(group_identifier)
+                # Для username получаем entity и вступаем (без @ или с @)
+                username = group_identifier.lstrip('@')
+                entity = await self.client.get_entity(username)
                 await self.client(JoinChannelRequest(entity))
             
             logger.info(f"Успешное вступление в группу: {group_identifier}")
@@ -405,6 +424,44 @@ class TelegramClientWrapper:
                 "error": str(e)
             }
     
+    def _get_message_link(self, entity, message_id: int) -> str:
+        """
+        Формирование ссылки на отправленное сообщение
+        
+        Args:
+            entity: Объект чата/группы/канала
+            message_id: ID отправленного сообщения
+            
+        Returns:
+            Ссылка на сообщение
+        """
+        try:
+            # Пытаемся получить username
+            if hasattr(entity, 'username') and entity.username:
+                return f"https://t.me/{entity.username}/{message_id}"
+            
+            # Если нет username, используем ID
+            # Для групп/каналов ID обычно в формате -100xxxxxxxxxx
+            # Для ссылки нужно убрать -100
+            chat_id = entity.id
+            
+            # Преобразуем ID для ссылки
+            if chat_id < 0:
+                # Убираем -100 для каналов/супергрупп
+                # Например: -1001234567890 -> 1234567890
+                chat_id_abs = abs(chat_id)
+                chat_id_str = str(chat_id_abs)
+                if chat_id_str.startswith('100'):
+                    # Убираем префикс '100'
+                    chat_id_str = chat_id_str[3:]
+                return f"https://t.me/c/{chat_id_str}/{message_id}"
+            else:
+                # Для обычных чатов (редко используется)
+                return f"https://t.me/c/{chat_id}/{message_id}"
+        except Exception as e:
+            logger.warning(f"Не удалось сформировать ссылку на сообщение: {e}")
+            return ""
+    
     async def send_message(self, group_identifier: str, message: str) -> Dict[str, any]:
         """
         Отправка сообщения в группу
@@ -417,14 +474,21 @@ class TelegramClientWrapper:
             Словарь с результатом операции
         """
         try:
+            entity = None
             # Если это числовой ID, получаем entity через диалоги
+            # ID может быть сохранен без минуса, пробуем оба варианта
             if group_identifier.lstrip('-').isdigit():
-                group_id = int(group_identifier)
-                entity = None
+                group_id_abs = abs(int(group_identifier))  # Абсолютное значение
+                # Пробуем отрицательный ID (стандартный формат Telegram для групп)
+                group_id_neg = -group_id_abs
+                # Также пробуем с префиксом -100 для супергрупп/каналов
+                group_id_neg_100 = -1000000000000 - group_id_abs if group_id_abs < 1000000000000 else None
                 
-                # Ищем группу в диалогах по ID
+                # Ищем группу в диалогах по ID (пробуем разные варианты)
                 async for dialog in self.client.iter_dialogs():
-                    if dialog.id == group_id:
+                    if (dialog.id == group_id_neg or 
+                        dialog.id == -group_id_abs or
+                        (group_id_neg_100 and dialog.id == group_id_neg_100)):
                         entity = dialog.entity
                         break
                 
@@ -435,16 +499,21 @@ class TelegramClientWrapper:
                         "error": f"Группа с ID {group_identifier} не найдена в ваших диалогах. Убедитесь, что вы состоите в этой группе."
                     }
             else:
-                # Это username, получаем entity по username
-                entity = await self.client.get_entity(group_identifier)
+                # Это username, получаем entity по username (без @ или с @)
+                username = group_identifier.lstrip('@')
+                entity = await self.client.get_entity(username)
             
             sent = await self.client.send_message(entity, message)
+            
+            # Формируем ссылку на сообщение
+            message_link = self._get_message_link(entity, sent.id)
             
             logger.info(f"Сообщение отправлено в {group_identifier}")
             return {
                 "success": True,
                 "group": group_identifier,
-                "message_id": sent.id
+                "message_id": sent.id,
+                "message_link": message_link
             }
         except ChatWriteForbiddenError:
             logger.error(f"Нет прав на отправку в {group_identifier}")

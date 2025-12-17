@@ -34,6 +34,8 @@ class MainWindow:
         self.on_scheduler_toggle: Optional[Callable] = None
         self.on_delete_group: Optional[Callable] = None
         self.on_clear_groups: Optional[Callable] = None
+        self.on_delays_changed: Optional[Callable] = None
+        self.on_export_groups_clicked: Optional[Callable] = None
         
         self._create_widgets()
     
@@ -135,6 +137,40 @@ class MainWindow:
                                         foreground="gray")
         self.next_run_label.pack(pady=5)
         
+        # Настройки задержек между отправками
+        delays_frame = ttk.LabelFrame(left_frame, text="Настройки задержек между отправками", padding="10")
+        delays_frame.pack(fill=tk.X, pady=(10, 0))
+        
+        delays_info_label = ttk.Label(delays_frame, 
+                                      text="Задержка между отправкой сообщений в группы:",
+                                      font=("Arial", 9))
+        delays_info_label.pack(anchor=tk.W, pady=(0, 5))
+        
+        delays_input_frame = ttk.Frame(delays_frame)
+        delays_input_frame.pack(fill=tk.X, pady=5)
+        
+        ttk.Label(delays_input_frame, text="От").pack(side=tk.LEFT, padx=5)
+        self.delay_min_entry = ttk.Entry(delays_input_frame, width=5)
+        self.delay_min_entry.pack(side=tk.LEFT, padx=2)
+        self.delay_min_entry.insert(0, "1")
+        self.delay_min_entry.bind('<Control-v>', lambda e: self._paste_entry(self.delay_min_entry))
+        self.delay_min_entry.bind('<Control-V>', lambda e: self._paste_entry(self.delay_min_entry))
+        
+        ttk.Label(delays_input_frame, text="до").pack(side=tk.LEFT, padx=5)
+        self.delay_max_entry = ttk.Entry(delays_input_frame, width=5)
+        self.delay_max_entry.pack(side=tk.LEFT, padx=2)
+        self.delay_max_entry.insert(0, "3")
+        self.delay_max_entry.bind('<Control-v>', lambda e: self._paste_entry(self.delay_max_entry))
+        self.delay_max_entry.bind('<Control-V>', lambda e: self._paste_entry(self.delay_max_entry))
+        
+        ttk.Label(delays_input_frame, text="минут").pack(side=tk.LEFT, padx=5)
+        
+        # Привязываем изменение задержек к сохранению
+        self.delay_min_entry.bind('<KeyRelease>', self._on_delays_changed)
+        self.delay_max_entry.bind('<KeyRelease>', self._on_delays_changed)
+        self.delay_min_entry.bind('<FocusOut>', self._on_delays_changed)
+        self.delay_max_entry.bind('<FocusOut>', self._on_delays_changed)
+        
         # Правая панель
         right_frame = ttk.Frame(self.root, padding="10")
         right_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
@@ -162,6 +198,8 @@ class MainWindow:
                   command=self._on_load_groups_clicked).pack(fill=tk.X, pady=2)
         ttk.Button(groups_buttons_frame, text="Выбрать вручную", 
                   command=self._on_select_groups_clicked).pack(fill=tk.X, pady=2)
+        ttk.Button(groups_buttons_frame, text="Экспорт групп", 
+                  command=self._on_export_groups_clicked).pack(fill=tk.X, pady=2)
         ttk.Button(groups_buttons_frame, text="Удалить выбранную", 
                   command=self._remove_selected_group).pack(fill=tk.X, pady=2)
         ttk.Button(groups_buttons_frame, text="Очистить список", 
@@ -249,6 +287,11 @@ class MainWindow:
         if self.on_scheduler_toggle:
             self.on_scheduler_toggle()
     
+    def _on_delays_changed(self, event=None):
+        """Обработка изменения настроек задержек"""
+        if self.on_delays_changed:
+            self.on_delays_changed()
+    
     def _on_auth_clicked(self):
         """Обработка нажатия кнопки авторизации"""
         if self.on_auth_clicked:
@@ -273,6 +316,11 @@ class MainWindow:
         """Обработка выбора групп вручную"""
         if self.on_select_groups_clicked:
             self.on_select_groups_clicked()
+    
+    def _on_export_groups_clicked(self):
+        """Обработка нажатия кнопки экспорта групп"""
+        if self.on_export_groups_clicked:
+            self.on_export_groups_clicked()
     
     def _remove_selected_group(self):
         """Удаление выбранной группы из списка"""
@@ -339,6 +387,28 @@ class MainWindow:
         self.log_text.insert(tk.END, f"[{timestamp}] {level}: {message}\n")
         self.log_text.see(tk.END)
         self.log_text.config(state=tk.DISABLED)
+    
+    def get_delays_config(self) -> dict:
+        """Получить настройки задержек"""
+        try:
+            min_delay = float(self.delay_min_entry.get() or "1")
+            max_delay = float(self.delay_max_entry.get() or "3")
+            return {
+                'send_min_minutes': min_delay,
+                'send_max_minutes': max_delay
+            }
+        except ValueError:
+            return {
+                'send_min_minutes': 1.0,
+                'send_max_minutes': 3.0
+            }
+    
+    def set_delays_config(self, send_min_minutes: float, send_max_minutes: float):
+        """Установить настройки задержек"""
+        self.delay_min_entry.delete(0, tk.END)
+        self.delay_min_entry.insert(0, str(send_min_minutes))
+        self.delay_max_entry.delete(0, tk.END)
+        self.delay_max_entry.insert(0, str(send_max_minutes))
     
     def get_scheduler_config(self) -> dict:
         """Получить настройки планировщика"""

@@ -6,8 +6,8 @@ session_file = sessions/session
 [delays]
 join_group_min = 5
 join_group_max = 15
-send_message_min = 3
-send_message_max = 10
+send_message_min_minutes = 1
+send_message_max_minutes = 3
 
 [scheduler]
 enabled = false

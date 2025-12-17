@@ -12,21 +12,21 @@ class DelayManager:
     def __init__(self, 
                  join_min: float = 5.0, 
                  join_max: float = 15.0,
-                 send_min: float = 3.0,
-                 send_max: float = 10.0):
+                 send_min_minutes: float = 1.0,
+                 send_max_minutes: float = 3.0):
         """
         Инициализация менеджера задержек
         
         Args:
             join_min: Минимальная задержка при вступлении (секунды)
             join_max: Максимальная задержка при вступлении (секунды)
-            send_min: Минимальная задержка при отправке (секунды)
-            send_max: Максимальная задержка при отправке (секунды)
+            send_min_minutes: Минимальная задержка при отправке (минуты)
+            send_max_minutes: Максимальная задержка при отправке (минуты)
         """
         self.join_min = join_min
         self.join_max = join_max
-        self.send_min = send_min
-        self.send_max = send_max
+        self.send_min_minutes = send_min_minutes
+        self.send_max_minutes = send_max_minutes
     
     def get_join_delay(self) -> float:
         """
@@ -42,9 +42,10 @@ class DelayManager:
         Получить случайную задержку для отправки сообщения
         
         Returns:
-            Случайное значение задержки в секундах
+            Случайное значение задержки в секундах (конвертируется из минут)
         """
-        return random.uniform(self.send_min, self.send_max)
+        delay_minutes = random.uniform(self.send_min_minutes, self.send_max_minutes)
+        return delay_minutes * 60  # Конвертируем минуты в секунды
     
     async def wait_join_delay(self) -> None:
         """Асинхронное ожидание задержки для вступления"""
@@ -72,23 +73,23 @@ class DelayManager:
     def update_delays(self, 
                      join_min: float = None,
                      join_max: float = None,
-                     send_min: float = None,
-                     send_max: float = None) -> None:
+                     send_min_minutes: float = None,
+                     send_max_minutes: float = None) -> None:
         """
         Обновить значения задержек
         
         Args:
-            join_min: Новая минимальная задержка при вступлении
-            join_max: Новая максимальная задержка при вступлении
-            send_min: Новая минимальная задержка при отправке
-            send_max: Новая максимальная задержка при отправке
+            join_min: Новая минимальная задержка при вступлении (секунды)
+            join_max: Новая максимальная задержка при вступлении (секунды)
+            send_min_minutes: Новая минимальная задержка при отправке (минуты)
+            send_max_minutes: Новая максимальная задержка при отправке (минуты)
         """
         if join_min is not None:
             self.join_min = join_min
         if join_max is not None:
             self.join_max = join_max
-        if send_min is not None:
-            self.send_min = send_min
-        if send_max is not None:
-            self.send_max = send_max
+        if send_min_minutes is not None:
+            self.send_min_minutes = send_min_minutes
+        if send_max_minutes is not None:
+            self.send_max_minutes = send_max_minutes
 

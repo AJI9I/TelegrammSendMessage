@@ -4,6 +4,7 @@
 from typing import List, Dict, Callable, Optional
 from src.telegram_client import TelegramClientWrapper
 from src.utils.delay_manager import DelayManager
+from src.utils.message_hash import add_hash_to_message
 from src.utils.logger import setup_logger
 
 logger = setup_logger()
@@ -29,6 +30,7 @@ class MessageSender:
         self._total_groups = 0
         self._processed_groups = 0
         self._on_progress_update: Optional[Callable] = None
+        self._on_result_update: Optional[Callable] = None
     
     def set_progress_callback(self, callback: Callable[[float, str], None]):
         """
@@ -38,6 +40,16 @@ class MessageSender:
             callback: Функция для вызова при обновлении прогресса
         """
         self._on_progress_update = callback
+    
+    def set_result_callback(self, callback: Callable[[str, str, str], None]):
+        """
+        Установка callback для вывода результатов отправки
+        
+        Args:
+            callback: Функция для вызова при отправке сообщения
+                     Принимает: (group, message_link, status)
+        """
+        self._on_result_update = callback
     
     def _update_progress(self, status: str = None):
         """Обновление прогресса"""
@@ -179,13 +191,17 @@ class MessageSender:
                     if not join_result.get("success"):
                         # Не удалось вступить
                         results["failed"] += 1
+                        error_msg = f"Не удалось вступить в группу: {join_result.get('error', 'Неизвестная ошибка')}"
                         results["details"].append({
                             "group": group,
                             "action": "send",
                             "success": False,
-                            "error": f"Не удалось вступить в группу: {join_result.get('error', 'Неизвестная ошибка')}",
+                            "error": error_msg,
                             "join_error": join_result.get("error")
                         })
+                        # Выводим ошибку в UI в реальном времени
+                        if self._on_result_update:
+                            self._on_result_update(group, error_msg, "ERROR")
                         self._processed_groups += 1
                         self._update_progress(f"Ошибка вступления: {self._processed_groups}/{self._total_groups}")
                         continue
@@ -207,28 +223,49 @@ class MessageSender:
                     # Нет прав на отправку
                     results["no_permission"] += 1
                     results["failed"] += 1
+                    error_msg = f"Нет прав на отправку: {can_send_check.get('reason', 'Неизвестная причина')}"
                     results["details"].append({
                         "group": group,
                         "action": "send",
                         "success": False,
-                        "error": f"Нет прав на отправку: {can_send_check.get('reason', 'Неизвестная причина')}",
+                        "error": error_msg,
                         "reason": can_send_check.get("reason")
                     })
                     logger.warning(f"Нет прав на отправку в {group}: {can_send_check.get('reason')}")
+                    # Выводим ошибку в UI в реальном времени
+                    if self._on_result_update:
+                        self._on_result_update(group, error_msg, "ERROR")
                     self._processed_groups += 1
                     self._update_progress(f"Нет прав: {self._processed_groups}/{self._total_groups}")
                     continue
                 
-                # Шаг 4: Отправляем сообщение
+                # Шаг 4: Добавляем уникальную хэш-строку к сообщению
+                message_with_hash = add_hash_to_message(message, group)
+                
+                # Шаг 5: Отправляем сообщение
                 self._update_progress(f"Отправка в: {group}")
-                result = await self.client.send_message(group, message)
+                result = await self.client.send_message(group, message_with_hash)
                 
                 if result.get("success"):
                     results["sent"] += 1
-                    logger.info(f"Сообщение отправлено в {group}")
+                    message_link = result.get("message_link", "")
+                    if message_link:
+                        logger.info(f"✓ Сообщение отправлено в {group}: {message_link}")
+                        # Выводим результат в UI в реальном времени
+                        if self._on_result_update:
+                            self._on_result_update(group, message_link, "SUCCESS")
+                    else:
+                        logger.info(f"✓ Сообщение отправлено в {group}")
+                        # Выводим результат в UI в реальном времени
+                        if self._on_result_update:
+                            self._on_result_update(group, "", "SUCCESS")
                 else:
                     results["failed"] += 1
-                    logger.warning(f"Не удалось отправить в {group}: {result.get('error')}")
+                    error_msg = result.get('error', 'Неизвестная ошибка')
+                    logger.warning(f"✗ Не удалось отправить в {group}: {error_msg}")
+                    # Выводим ошибку в UI в реальном времени
+                    if self._on_result_update:
+                        self._on_result_update(group, error_msg, "ERROR")
                 
                 results["details"].append({
                     "group": group,
@@ -244,13 +281,17 @@ class MessageSender:
                 
             except Exception as e:
                 logger.error(f"Ошибка при обработке группы {group}: {e}")
+                error_msg = str(e)
                 results["failed"] += 1
                 results["details"].append({
                     "group": group,
                     "action": "send",
                     "success": False,
-                    "error": str(e)
+                    "error": error_msg
                 })
+                # Выводим ошибку в UI в реальном времени
+                if self._on_result_update:
+                    self._on_result_update(group, error_msg, "ERROR")
                 self._processed_groups += 1
         
         self._update_progress("Рассылка завершена")

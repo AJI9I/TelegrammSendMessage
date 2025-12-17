@@ -66,11 +66,16 @@ class FileParser:
             address: Адрес группы в любом формате
             
         Returns:
-            Нормализованный адрес (username без @) или None если невалидный
+            Нормализованный адрес (username без @, ID без знака минус) или None если невалидный
         """
         address = address.strip()
         if not address:
             return None
+        
+        # Проверка на числовой ID (может быть с минусом или без)
+        # Убираем минус для нормализации
+        if address.lstrip('-').isdigit():
+            return str(abs(int(address)))
         
         # Проверка на username (@username или просто username)
         match = FileParser.USERNAME_PATTERN.search(address)

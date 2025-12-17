@@ -46,8 +46,8 @@ class ConfigManager:
         self.config['delays'] = {
             'join_group_min': '5',
             'join_group_max': '15',
-            'send_message_min': '3',
-            'send_message_max': '10'
+            'send_message_min_minutes': '1',
+            'send_message_max_minutes': '3'
         }
         self.config['scheduler'] = {
             'enabled': 'false',
@@ -106,16 +106,21 @@ class ConfigManager:
         return {
             'join_min': float(self.config.get('delays', 'join_group_min', fallback='5')),
             'join_max': float(self.config.get('delays', 'join_group_max', fallback='15')),
-            'send_min': float(self.config.get('delays', 'send_message_min', fallback='3')),
-            'send_max': float(self.config.get('delays', 'send_message_max', fallback='10'))
+            'send_min_minutes': float(self.config.get('delays', 'send_message_min_minutes', fallback='1')),
+            'send_max_minutes': float(self.config.get('delays', 'send_message_max_minutes', fallback='3'))
         }
     
-    def set_delays(self, join_min: float, join_max: float, send_min: float, send_max: float):
+    def set_delays(self, join_min: float = None, join_max: float = None, 
+                   send_min_minutes: float = None, send_max_minutes: float = None):
         """Установить задержки"""
-        self.config.set('delays', 'join_group_min', str(join_min))
-        self.config.set('delays', 'join_group_max', str(join_max))
-        self.config.set('delays', 'send_message_min', str(send_min))
-        self.config.set('delays', 'send_message_max', str(send_max))
+        if join_min is not None:
+            self.config.set('delays', 'join_group_min', str(join_min))
+        if join_max is not None:
+            self.config.set('delays', 'join_group_max', str(join_max))
+        if send_min_minutes is not None:
+            self.config.set('delays', 'send_message_min_minutes', str(send_min_minutes))
+        if send_max_minutes is not None:
+            self.config.set('delays', 'send_message_max_minutes', str(send_max_minutes))
         self.save_config()
     
     # Scheduler
